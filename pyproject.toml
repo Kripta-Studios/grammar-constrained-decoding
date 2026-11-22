@@ -1,0 +1,22 @@
+[project]
+name = "gcd"
+version = "0.1.0"
+description = "Grammar-constrained decoding from scratch: JSON Schema -> CFG -> byte PDA -> cached token masks"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = ["numpy", "pydantic>=2"]
+
+[project.optional-dependencies]
+bench = ["torch", "transformers", "matplotlib"]
+test = ["pytest"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["slow: loads a real tokenizer/model; skipped unless RUN_SLOW=1"]
