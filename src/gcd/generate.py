@@ -24,6 +24,7 @@ class GenResult:
     finished: bool  # stopped on EOS (vs. hit max_new_tokens)
     step_ms: list[float] = field(default_factory=list)  # wall time per generated token
     mask_ms: list[float] = field(default_factory=list)  # CPU time spent building masks
+    mask_cold: list[bool] = field(default_factory=list)  # step filled a new cache entry
 
 
 @torch.inference_mode()
@@ -50,9 +51,10 @@ def generate(
         past = o.past_key_values
         logits = o.logits[0, -1].float()
         if engine is not None:
-            tm = time.perf_counter()
+            tm, n_cached = time.perf_counter(), engine.stats.nodes_cached
             allowed = engine.mask(matcher)  # runs on CPU while the GPU computes `logits`
             res.mask_ms.append((time.perf_counter() - tm) * 1e3)
+            res.mask_cold.append(engine.stats.nodes_cached != n_cached)
             allowed_t = torch.from_numpy(allowed[: logits.shape[0]]).to(dev, non_blocking=True)
             logits = logits.masked_fill(~allowed_t, float("-inf"))
         if temperature <= 0:

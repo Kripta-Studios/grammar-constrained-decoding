@@ -26,6 +26,7 @@ lazily at decode time (XGrammar precomputes per node ahead of time).
 """
 from __future__ import annotations
 
+import bisect
 import time
 from dataclasses import dataclass, field
 from typing import Sequence
@@ -132,6 +133,7 @@ class MaskEngine:
         cd: list[int] = []
         i, n = 0, len(order)
         order_l, lcp_l = order.tolist(), lcp.tolist()
+        keys = [toks[t] for t in order_l]
         while i < n:
             tid = order_l[i]
             tok: bytes = toks[tid]  # type: ignore[assignment]
@@ -155,16 +157,21 @@ class MaskEngine:
                     acc.append(tid)
                 elif ci and esc[L - 1]:  # escaped into the caller with bytes left over
                     cd.append(tid)
-                i += 1
-                continue
-            # Prefix tok[:dead_at] has no live path: every later token sharing it has the
-            # same fate. CD if (in CI mode) some path escaped on the way, else rejected.
-            mark_cd = ci and esc[dead_at]
-            j = i
-            while j < n and (j == i or lcp_l[j] >= dead_at):
-                if mark_cd:
-                    cd.append(order_l[j])
-                j += 1
+                if states[L]:
+                    i += 1
+                    continue
+                # Dead exactly at the end of this token: its extensions are dead too.
+                dead_at, i = L, i + 1
+                if i >= n or lcp_l[i] < L:
+                    continue  # no extension follows (cheap common case)
+            # Prefix tok[:dead_at] has no live path: every following token sharing it has
+            # the same fate. CD if (in CI mode) some path escaped on the way, else rejected.
+            # The subtree ends at the first token >= the prefix with its last byte
+            # incremented: a binary search on the sorted bytes instead of an O(|V|) skip.
+            succ = _successor(tok[:dead_at])
+            j = n if succ is None else bisect.bisect_left(keys, succ, i)
+            if ci and esc[dead_at]:
+                cd.extend(order_l[i:j])
             i = j
         return acc, cd
 
@@ -213,6 +220,17 @@ class MaskEngine:
         self.stats.calls += 1
         self.stats.total_ms += (time.perf_counter() - t0) * 1e3
         return out
+
+
+def _successor(prefix: bytes) -> bytes | None:
+    """Smallest byte string greater than every string starting with `prefix` (None: none)."""
+    p = bytearray(prefix)
+    while p and p[-1] == 0xFF:
+        p.pop()
+    if not p:
+        return None
+    p[-1] += 1
+    return bytes(p)
 
 
 def brute_force_mask(pda: PDA, vocab: TokenVocab, m: Matcher) -> np.ndarray:
